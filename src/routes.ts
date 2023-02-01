@@ -4,7 +4,7 @@ import { z } from "zod"
 import dayjs from "dayjs";
 
 export async function appRoutes (app: FastifyInstance) {
-    /* =====CreateHabits===== */
+    /** Create Habits */
     app.post('/habits', async (req) => {
         const createHabitsBody = z.object({
             title: z.string(),
@@ -34,27 +34,7 @@ export async function appRoutes (app: FastifyInstance) {
         })
     })
 
-    /** This is myRoute to completedHabits */
-    // app.post('/completed_habits', async (req) => {
-    //     const getIdParams = z.object({
-    //         id: z.string(),
-    //         date: z.coerce.date()
-    //     })
-    //     const { id, date } = getIdParams.parse(req.body)
-
-    //     const completed_habits = await prisma.day.create({
-    //         data: {
-    //             date: date,
-    //             dayHabits: {
-    //                 create: {
-    //                     habit_id: id
-    //                 }
-    //             }
-    //         }
-    //     })
-    //     return completed_habits;
-    // })
-
+    /** Get Habits */
     app.get('/get_day', async (req) => {
         const getDayParams = z.object({
             date: z.coerce.date()
@@ -96,5 +76,135 @@ export async function appRoutes (app: FastifyInstance) {
             possibleHabits,
             completedHabits
         };
+    })
+
+    /** This is myRoute to completedHabits */
+    // app.post('/completed_habits', async (req) => {
+    //     const getIdParams = z.object({
+    //         id: z.string(),
+    //         date: z.coerce.date()
+    //     })
+    //     const { id, date } = getIdParams.parse(req.body)
+
+    //     const completed_habits = await prisma.day.create({
+    //         data: {
+    //             date: date,
+    //             dayHabits: {
+    //                 create: {
+    //                     habit_id: id
+    //                 }
+    //             }
+    //         }
+    //     })
+    //     return completed_habits;
+    // })
+ 
+    /** Return Summary
+     * Habits, Dates and Completeds
+     */
+    app.patch('/completed/:id/toggle', async (req) => {
+        const toggleHabitsParams = z.object({
+            id: z.string().uuid()
+        })
+
+        const { id } = toggleHabitsParams.parse(req.params)
+
+        const today = dayjs().startOf('day').toDate()
+
+        let day = await prisma.day.findUnique({
+            where: {
+                date: today
+            }
+        })
+
+        if (!day) {
+            day = await prisma.day.create({
+                data: {
+                    date: today
+                }
+            })
+        }
+
+        const dayHabit = await prisma.dayHabit.findUnique({
+            where: {
+                day_id_habit_id: {
+                    day_id: day.id,
+                    habit_id: id
+                }
+            }
+        })
+
+        if (dayHabit) {
+            await prisma.dayHabit.delete({
+                where: {
+                    id: dayHabit.id
+                }
+            })
+        } else {
+            await prisma.dayHabit.create({
+                data: {
+                    day_id: day.id,
+                    habit_id: id
+                }
+            })
+        }
+    })
+
+    /* My function to get a summary
+        app.get('/summary', async () => {
+            const today = dayjs().startOf('day').toDate()
+            const habits = await prisma.habits.findMany()
+
+            const day = await prisma.day.findUnique({
+                where: {
+                    date: today
+                },
+                include: {
+                    dayHabits: true
+                }
+            })
+
+            const completedHabits = day?.dayHabits.map(habit => (
+                habit.habit_id
+            ))
+
+            const lenghtCompletedHabits = completedHabits.length
+
+            const amountHabitsOfDay = habits.length
+            const percentageCompletedHabits = Math.floor((lenghtCompletedHabits * 100) / amountHabitsOfDay)
+
+            return { 
+                habits, 
+                completedHabits, 
+                lenghtCompletedHabits, 
+                amountHabitsOfDay, 
+                percentageCompletedHabits 
+            }
+        })
+    */
+
+    app.get('/summary', async () => {
+        const summary = await prisma.$queryRaw`
+            SELECT
+                D.id, 
+                D.date,
+                (
+                    SELECT cast(count(*) as float)
+                    FROM day_habits DH
+                    WHERE DH.day_id = D.id
+                ) as completed,
+                (
+                    SELECT cast(count(*) as float)
+                    FROM habits_week_days HWD
+                    JOIN habits H
+                        ON H.id = HWD.habit_id
+                    WHERE 
+                        HWD.week_day = cast(strftime('%w', D.date/1000.0, 'unixepoch') as int)
+                        AND H.created_at >= D.date
+                ) as amount
+            FROM days D;
+        `
+
+        return summary;
     })
 }
